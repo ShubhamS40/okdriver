@@ -1,0 +1,14 @@
+version: '3'
+
+services:
+  pothole-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: pothole-api
+    container_name: pothole-api-container
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./:/app
+    restart: unless-stopped

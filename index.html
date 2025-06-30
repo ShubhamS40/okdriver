@@ -1,0 +1,273 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Drowsiness Detection WebSocket Test</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        h1 {
+            color: #333;
+            text-align: center;
+        }
+        .container {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 20px;
+            justify-content: center;
+        }
+        .video-container {
+            position: relative;
+            width: 640px;
+            height: 480px;
+            border: 2px solid #ccc;
+            border-radius: 8px;
+            overflow: hidden;
+        }
+        #video {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+        #overlay-canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 10;
+        }
+        #result {
+            background-color: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            min-width: 300px;
+        }
+        .metric {
+            margin-bottom: 15px;
+            padding: 10px;
+            border-radius: 5px;
+        }
+        .alert {
+            background-color: #ffdddd;
+            border-left: 5px solid #f44336;
+        }
+        .normal {
+            background-color: #ddffdd;
+            border-left: 5px solid #4CAF50;
+        }
+        .emotion-indicator {
+            display: inline-block;
+            padding: 5px 10px;
+            border-radius: 15px;
+            color: white;
+            font-weight: bold;
+            background-color: #2196F3;
+        }
+        .yawning-indicator {
+            display: inline-block;
+            padding: 5px 10px;
+            border-radius: 15px;
+            color: white;
+            font-weight: bold;
+        }
+        .yawning-yes {
+            background-color: #ff9800;
+        }
+        .yawning-no {
+            background-color: #4CAF50;
+        }
+    </style>
+</head>
+<body>
+    <h1>Drowsiness Detection WebSocket Test</h1>
+    <div class="container">
+        <div class="video-container">
+            <video id="video" autoplay></video>
+            <canvas id="overlay-canvas" width="640" height="480"></canvas>
+        </div>
+        <div id="result"></div>
+    </div>
+    <canvas id="canvas" width="640" height="480" style="display:none;"></canvas>
+
+    <script>
+        const video = document.getElementById('video');
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+        const overlayCanvas = document.getElementById('overlay-canvas');
+        const overlayCtx = overlayCanvas.getContext('2d');
+        const resultDiv = document.getElementById('result');
+        
+        // Connect to WebSocket
+        const ws = new WebSocket('ws://192.168.0.103:8000/ws/drowsiness');
+        
+        ws.onopen = () => {
+            console.log('Connected to WebSocket');
+            // Start video stream with front camera
+            navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' } })
+                .then(stream => {
+                    video.srcObject = stream;
+                    // Start sending frames
+                    setInterval(sendFrame, 500); // Send every 500ms
+                })
+                .catch(err => console.error('Error accessing camera:', err));
+        };
+        
+        ws.onmessage = (event) => {
+            const result = JSON.parse(event.data);
+            
+            // Clear overlay canvas
+            overlayCtx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
+            
+            // Draw face boundary box if face detected
+            if (result.face_rects && result.face_rects.length > 0) {
+                const face = result.face_rects[0];
+                
+                // Draw face boundary box
+                overlayCtx.strokeStyle = result.drowsy ? 'red' : 'green';
+                overlayCtx.lineWidth = 3;
+                overlayCtx.strokeRect(face.x, face.y, face.width, face.height);
+                
+                // Add emotion label above face
+                overlayCtx.fillStyle = getEmotionColor(result.emotion);
+                overlayCtx.fillRect(face.x, face.y - 30, 100, 25);
+                overlayCtx.fillStyle = 'white';
+                overlayCtx.font = '16px Arial';
+                overlayCtx.fillText(result.emotion, face.x + 5, face.y - 12);
+                
+                // Draw yawning indicator if detected
+                if (result.is_yawning) {
+                    overlayCtx.fillStyle = 'rgba(255, 152, 0, 0.7)';
+                    overlayCtx.fillRect(face.x, face.y + face.height, face.width, 30);
+                    overlayCtx.fillStyle = 'white';
+                    overlayCtx.font = '16px Arial';
+                    overlayCtx.fillText('YAWNING DETECTED', face.x + 5, face.y + face.height + 20);
+                }
+                
+                // Draw landmarks if available
+                if (result.landmarks) {
+                    // Draw left eye landmarks
+                    if (result.landmarks.left_eye && result.landmarks.left_eye.length > 0) {
+                        overlayCtx.fillStyle = result.drowsy ? 'red' : '#00BFFF';
+                        result.landmarks.left_eye.forEach(point => {
+                            overlayCtx.beginPath();
+                            overlayCtx.arc(point.x, point.y, 2, 0, 2 * Math.PI);
+                            overlayCtx.fill();
+                        });
+                        
+                        // Connect left eye landmarks
+                        overlayCtx.strokeStyle = result.drowsy ? 'red' : '#00BFFF';
+                        overlayCtx.lineWidth = 1;
+                        overlayCtx.beginPath();
+                        overlayCtx.moveTo(result.landmarks.left_eye[0].x, result.landmarks.left_eye[0].y);
+                        for (let i = 1; i < result.landmarks.left_eye.length; i++) {
+                            overlayCtx.lineTo(result.landmarks.left_eye[i].x, result.landmarks.left_eye[i].y);
+                        }
+                        overlayCtx.closePath();
+                        overlayCtx.stroke();
+                    }
+                    
+                    // Draw right eye landmarks
+                    if (result.landmarks.right_eye && result.landmarks.right_eye.length > 0) {
+                        overlayCtx.fillStyle = result.drowsy ? 'red' : '#00BFFF';
+                        result.landmarks.right_eye.forEach(point => {
+                            overlayCtx.beginPath();
+                            overlayCtx.arc(point.x, point.y, 2, 0, 2 * Math.PI);
+                            overlayCtx.fill();
+                        });
+                        
+                        // Connect right eye landmarks
+                        overlayCtx.strokeStyle = result.drowsy ? 'red' : '#00BFFF';
+                        overlayCtx.lineWidth = 1;
+                        overlayCtx.beginPath();
+                        overlayCtx.moveTo(result.landmarks.right_eye[0].x, result.landmarks.right_eye[0].y);
+                        for (let i = 1; i < result.landmarks.right_eye.length; i++) {
+                            overlayCtx.lineTo(result.landmarks.right_eye[i].x, result.landmarks.right_eye[i].y);
+                        }
+                        overlayCtx.closePath();
+                        overlayCtx.stroke();
+                    }
+                    
+                    // Draw mouth landmarks
+                    if (result.landmarks.mouth && result.landmarks.mouth.length > 0) {
+                        overlayCtx.fillStyle = result.is_yawning ? '#FF9800' : '#4CAF50';
+                        result.landmarks.mouth.forEach(point => {
+                            overlayCtx.beginPath();
+                            overlayCtx.arc(point.x, point.y, 2, 0, 2 * Math.PI);
+                            overlayCtx.fill();
+                        });
+                        
+                        // Connect mouth landmarks
+                        overlayCtx.strokeStyle = result.is_yawning ? '#FF9800' : '#4CAF50';
+                        overlayCtx.lineWidth = 1;
+                        overlayCtx.beginPath();
+                        overlayCtx.moveTo(result.landmarks.mouth[0].x, result.landmarks.mouth[0].y);
+                        for (let i = 1; i < result.landmarks.mouth.length; i++) {
+                            overlayCtx.lineTo(result.landmarks.mouth[i].x, result.landmarks.mouth[i].y);
+                        }
+                        overlayCtx.closePath();
+                        overlayCtx.stroke();
+                    }
+                }
+            }
+            
+            // Use the is_yawning flag from the API response
+            const isYawning = result.is_yawning;
+            
+            // Update results panel
+            resultDiv.innerHTML = `
+                <div class="metric ${result.drowsy ? 'alert' : 'normal'}">
+                    <h3>Drowsiness Status</h3>
+                    <p><strong>Status:</strong> ${result.drowsy ? '⚠️ DROWSY DETECTED' : '✅ ALERT'}</p>
+                </div>
+                
+                <div class="metric">
+                    <h3>Eye & Mouth Metrics</h3>
+                    <p><strong>Eye Aspect Ratio (EAR):</strong> ${result.ear.toFixed(3)}</p>
+                    <p><strong>Mouth Aspect Ratio (MAR):</strong> ${result.mar.toFixed(3)}</p>
+                </div>
+                
+                <div class="metric">
+                    <h3>Facial Analysis</h3>
+                    <p><strong>Emotion:</strong> <span class="emotion-indicator" style="background-color: ${getEmotionColor(result.emotion)}">${result.emotion}</span></p>
+                    <p><strong>Yawning:</strong> <span class="yawning-indicator ${isYawning ? 'yawning-yes' : 'yawning-no'}">${isYawning ? 'YES' : 'NO'}</span></p>
+                    <p><strong>CNN Confidence:</strong> ${(result.cnn_confidence * 100).toFixed(1)}%</p>
+                </div>
+                
+                <div class="metric">
+                    <h3>Face Detection</h3>
+                    <p><strong>Face Detected:</strong> ${result.face_rects && result.face_rects.length > 0 ? '✅ YES' : '❌ NO'}</p>
+                    ${result.face_rects && result.face_rects.length > 0 ? 
+                        `<p><strong>Position:</strong> X:${result.face_rects[0].x}, Y:${result.face_rects[0].y}</p>
+                         <p><strong>Size:</strong> ${result.face_rects[0].width}x${result.face_rects[0].height}</p>` : 
+                        ''}
+                </div>
+            `;
+        };
+        
+        function getEmotionColor(emotion) {
+            const colors = {
+                'angry': '#e53935',
+                'disgust': '#8e24aa',
+                'fear': '#6a1b9a',
+                'happy': '#43a047',
+                'sad': '#1e88e5',
+                'surprise': '#fb8c00',
+                'neutral': '#546e7a'
+            };
+            return colors[emotion] || '#546e7a';
+        }
+        
+        function sendFrame() {
+            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+            const imageData = canvas.toDataURL('image/jpeg', 0.8);
+            ws.send(imageData);
+        }
+    </script>
+</body>
+</html>

@@ -1,0 +1,27 @@
+# Python cache files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+venv/
+env/
+.env/
+
+# IDE files
+.idea/
+.vscode/
+
+# Git files
+.git/
+.gitignore
+
+# Test files
+test*.py
+
+# Logs
+*.log
+
+# Local development files
+.DS_Store
+Thumbs.db

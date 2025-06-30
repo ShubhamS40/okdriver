@@ -1,0 +1,8 @@
+opencv-python
+numpy
+tensorflow
+dlib
+pygame
+joblib
+scipy
+deepface
